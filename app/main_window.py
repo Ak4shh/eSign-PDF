@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import copy
 import os
 from datetime import datetime
@@ -7,11 +8,26 @@ from typing import List, Optional
 from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QAction, QFont, QIcon
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
-    QHBoxLayout, QLabel, QLineEdit,
-    QListView, QListWidget, QListWidgetItem,
-    QMainWindow, QMessageBox, QPushButton,
-    QStatusBar, QToolBar, QVBoxLayout, QWidget,
+    QApplication,
+    QButtonGroup,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListView,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QStatusBar,
+    QToolBar,
+    QVBoxLayout,
+    QWidget,
 )
 
 from app.image_service import validate_image_path
@@ -19,13 +35,23 @@ from app.models import OverlayItem, OverlayType
 from app.pdf_service import PdfService
 from app.pdf_viewer import PdfViewer
 from app.settings import (
-    APP_NAME, DEFAULT_DATE_FORMAT, SIGNATURE_FONTS,
-    SUPPORTED_COLORS, ZOOM_DEFAULT, ZOOM_MAX, ZOOM_MIN, ZOOM_STEP,
+    APP_NAME,
+    DEFAULT_DATE_FORMAT,
+    SIGNATURE_FONTS,
+    SUPPORTED_COLORS,
+    THEME,
+    ZOOM_DEFAULT,
+    ZOOM_MAX,
+    ZOOM_MIN,
+    ZOOM_STEP,
 )
+from app.theme import build_palette, build_stylesheet
 from app.tools import (
     PendingPlacement,
-    validate_date, validate_name,
-    validate_signature_image, validate_typed_signature,
+    validate_date,
+    validate_name,
+    validate_signature_image,
+    validate_typed_signature,
 )
 from app.widgets import StableComboBox
 
@@ -39,79 +65,98 @@ class MainWindow(QMainWindow):
         self._current_page: int = 0
         self._zoom: float = ZOOM_DEFAULT
         self._image_path: Optional[str] = None
+        self._current_mode: int = 0
 
+        self.setObjectName("mainWindow")
         self.setWindowTitle(APP_NAME)
-        self.resize(1100, 800)
+        self.resize(1200, 820)
 
+        self._apply_theme()
         self._build_ui()
         self._update_controls()
 
-    # ------------------------------------------------------------------
-    # UI construction
-    # ------------------------------------------------------------------
+    def _apply_theme(self) -> None:
+        app = QApplication.instance()
+        if app is None:
+            return
+        app.setStyle("Fusion")
+        app.setPalette(build_palette(THEME))
+        app.setStyleSheet(build_stylesheet(THEME))
 
     def _build_ui(self) -> None:
         self._build_toolbar()
 
         central = QWidget()
+        central.setObjectName("centralShell")
         self.setCentralWidget(central)
-        layout = QHBoxLayout(central)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
 
-        layout.addWidget(self._build_left_panel())
+        layout = QHBoxLayout(central)
+        layout.setContentsMargins(
+            THEME.spacing.outer,
+            THEME.spacing.outer,
+            THEME.spacing.outer,
+            THEME.spacing.outer,
+        )
+        layout.setSpacing(THEME.spacing.section_gap)
+
+        layout.addWidget(self._build_left_panel(), 0)
 
         self._viewer = PdfViewer()
+        self._viewer.setObjectName("pdfViewer")
         self._viewer.overlay_placed.connect(self._on_overlay_placed)
         self._viewer.overlay_deleted.connect(self._on_overlay_deleted)
         self._viewer.overlay_edit_requested.connect(self._on_overlay_edit_requested)
         self._viewer.overlay_resized.connect(self._on_overlay_resized)
         self._viewer.viewport_page_changed.connect(self._on_viewport_page_changed)
         layout.addWidget(self._viewer, stretch=1)
-        layout.addWidget(self._build_right_panel())
 
+        layout.addWidget(self._build_right_panel(), 0)
         self._build_statusbar()
 
     def _build_toolbar(self) -> None:
         tb = QToolBar("Main")
+        tb.setObjectName("mainToolbar")
         tb.setMovable(False)
-        tb.setIconSize(QSize(20, 20))
+        tb.setFloatable(False)
+        tb.setIconSize(QSize(16, 16))
         self.addToolBar(tb)
 
-        self._act_open = QAction("Open PDF...", self)
+        self._act_open = QAction("Open PDF", self)
         self._act_open.setShortcut("Ctrl+O")
         self._act_open.triggered.connect(self._open_pdf)
         tb.addAction(self._act_open)
 
-        self._act_save = QAction("Save As...", self)
+        self._act_save = QAction("Save As", self)
         self._act_save.setShortcut("Ctrl+S")
         self._act_save.triggered.connect(self._save_pdf)
         tb.addAction(self._act_save)
 
-        tb.addSeparator()
+        tb.addWidget(self._toolbar_gap(14))
 
         self._act_prev = QAction("Prev", self)
         self._act_prev.triggered.connect(self._prev_page)
         tb.addAction(self._act_prev)
 
         self._lbl_page = QLabel("Page 0 / 0")
+        self._lbl_page.setObjectName("toolbarPageLabel")
         self._lbl_page.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._lbl_page.setMinimumWidth(100)
+        self._lbl_page.setMinimumWidth(120)
         tb.addWidget(self._lbl_page)
 
         self._act_next = QAction("Next", self)
         self._act_next.triggered.connect(self._next_page)
         tb.addAction(self._act_next)
 
-        tb.addSeparator()
+        tb.addWidget(self._toolbar_gap(12))
 
         self._act_zoom_out = QAction("Zoom -", self)
         self._act_zoom_out.triggered.connect(self._zoom_out)
         tb.addAction(self._act_zoom_out)
 
         self._lbl_zoom = QLabel("100%")
+        self._lbl_zoom.setObjectName("toolbarZoomLabel")
         self._lbl_zoom.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._lbl_zoom.setMinimumWidth(55)
+        self._lbl_zoom.setMinimumWidth(64)
         tb.addWidget(self._lbl_zoom)
 
         self._act_zoom_in = QAction("Zoom +", self)
@@ -126,135 +171,211 @@ class MainWindow(QMainWindow):
         self._act_fit_page.triggered.connect(self._fit_page)
         tb.addAction(self._act_fit_page)
 
+    @staticmethod
+    def _toolbar_gap(width: int) -> QWidget:
+        spacer = QWidget()
+        spacer.setFixedWidth(width)
+        return spacer
+
     def _build_left_panel(self) -> QWidget:
         panel = QWidget()
-        panel.setFixedWidth(220)
         panel.setObjectName("leftPanel")
+        panel.setFixedWidth(THEME.sizes.left_panel_width)
+
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(
+            THEME.spacing.panel_padding,
+            THEME.spacing.panel_padding,
+            THEME.spacing.panel_padding,
+            THEME.spacing.panel_padding,
+        )
+        layout.setSpacing(THEME.spacing.section_gap)
 
-        # --- Mode label ---
-        lbl = QLabel("Overlay Type")
-        lbl.setFont(self._bold_font())
-        layout.addWidget(lbl)
+        title = QLabel("Overlay Tools")
+        title.setProperty("role", "sectionTitle")
+        layout.addWidget(title)
 
-        self._combo_mode = StableComboBox()
-        self._combo_mode.addItems(["Typed Signature", "Signature Image", "Name", "Date"])
-        self._combo_mode.currentIndexChanged.connect(self._on_mode_changed)
-        layout.addWidget(self._combo_mode)
+        tools_card = QFrame()
+        tools_card.setObjectName("panelCard")
+        tools_layout = QVBoxLayout(tools_card)
+        tools_layout.setContentsMargins(8, 8, 8, 8)
+        tools_layout.setSpacing(THEME.spacing.field_gap)
 
-        layout.addSpacing(6)
+        lbl_mode = QLabel("Select tool")
+        lbl_mode.setProperty("role", "subTitle")
+        tools_layout.addWidget(lbl_mode)
 
-        # --- Typed signature inputs ---
+        self._tool_group = QButtonGroup(self)
+        self._tool_group.setExclusive(True)
+        self._tool_group.idClicked.connect(self._on_mode_changed)
+        self._tool_buttons: list[QPushButton] = []
+
+        for idx, label in enumerate(("Typed Signature", "Signature Image", "Name", "Date")):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setProperty("role", "tool")
+            btn.setMinimumHeight(THEME.sizes.control_height)
+            self._tool_group.addButton(btn, idx)
+            self._tool_buttons.append(btn)
+            tools_layout.addWidget(btn)
+
+        self._tool_buttons[0].setChecked(True)
+        layout.addWidget(tools_card)
+
+        context_card = QFrame()
+        context_card.setObjectName("contextCard")
+        context_layout = QVBoxLayout(context_card)
+        context_layout.setContentsMargins(8, 8, 8, 8)
+        context_layout.setSpacing(THEME.spacing.field_gap)
+
+        ctx_title = QLabel("Tool Settings")
+        ctx_title.setProperty("role", "subTitle")
+        context_layout.addWidget(ctx_title)
+
         self._grp_typed = QWidget()
         gl = QVBoxLayout(self._grp_typed)
         gl.setContentsMargins(0, 0, 0, 0)
-        gl.setSpacing(4)
+        gl.setSpacing(THEME.spacing.field_gap)
 
-        gl.addWidget(QLabel("Signature text:"))
+        sig_label = QLabel("Signature text")
+        sig_label.setProperty("role", "fieldLabel")
+        gl.addWidget(sig_label)
+
         self._sig_text = QLineEdit()
-        self._sig_text.setPlaceholderText("Your name…")
+        self._sig_text.setPlaceholderText("Your name...")
         gl.addWidget(self._sig_text)
 
-        gl.addWidget(QLabel("Font:"))
+        font_label = QLabel("Font")
+        font_label.setProperty("role", "fieldLabel")
+        gl.addWidget(font_label)
+
         self._combo_font = StableComboBox()
-        for f in SIGNATURE_FONTS:
-            self._combo_font.addItem(f["name"])
+        for font in SIGNATURE_FONTS:
+            self._combo_font.addItem(font["name"])
         gl.addWidget(self._combo_font)
+        context_layout.addWidget(self._grp_typed)
 
-        layout.addWidget(self._grp_typed)
-
-        # --- Signature image inputs ---
         self._grp_image = QWidget()
         il = QVBoxLayout(self._grp_image)
         il.setContentsMargins(0, 0, 0, 0)
-        il.setSpacing(4)
+        il.setSpacing(THEME.spacing.field_gap)
 
-        il.addWidget(QLabel("Image file:"))
-        img_row = QHBoxLayout()
+        image_label = QLabel("Image file")
+        image_label.setProperty("role", "fieldLabel")
+        il.addWidget(image_label)
+
+        image_row = QHBoxLayout()
+        image_row.setContentsMargins(0, 0, 0, 0)
+        image_row.setSpacing(THEME.spacing.compact_gap)
+
         self._lbl_image = QLabel("(none)")
+        self._lbl_image.setProperty("role", "helper")
         self._lbl_image.setWordWrap(True)
-        img_row.addWidget(self._lbl_image, stretch=1)
-        btn_browse = QPushButton("Browse…")
+        image_row.addWidget(self._lbl_image, stretch=1)
+
+        btn_browse = QPushButton("Browse...")
+        btn_browse.setProperty("role", "quiet")
         btn_browse.clicked.connect(self._browse_image)
-        img_row.addWidget(btn_browse)
-        il.addLayout(img_row)
+        image_row.addWidget(btn_browse)
+        il.addLayout(image_row)
+        context_layout.addWidget(self._grp_image)
 
-        layout.addWidget(self._grp_image)
-
-        # --- Name input ---
         self._grp_name = QWidget()
         nl = QVBoxLayout(self._grp_name)
         nl.setContentsMargins(0, 0, 0, 0)
-        nl.setSpacing(4)
-        nl.addWidget(QLabel("Name:"))
+        nl.setSpacing(THEME.spacing.field_gap)
+
+        name_label = QLabel("Name")
+        name_label.setProperty("role", "fieldLabel")
+        nl.addWidget(name_label)
+
         self._name_text = QLineEdit()
         nl.addWidget(self._name_text)
-        layout.addWidget(self._grp_name)
+        context_layout.addWidget(self._grp_name)
 
-        # --- Date input ---
         self._grp_date = QWidget()
         dl = QVBoxLayout(self._grp_date)
         dl.setContentsMargins(0, 0, 0, 0)
-        dl.setSpacing(4)
-        dl.addWidget(QLabel("Date:"))
+        dl.setSpacing(THEME.spacing.field_gap)
+
+        date_label = QLabel("Date")
+        date_label.setProperty("role", "fieldLabel")
+        dl.addWidget(date_label)
+
         self._date_text = QLineEdit()
         self._date_text.setText(datetime.now().strftime(DEFAULT_DATE_FORMAT))
         dl.addWidget(self._date_text)
-        layout.addWidget(self._grp_date)
+        context_layout.addWidget(self._grp_date)
 
-        # --- Color picker (shared for text overlays) ---
-        layout.addSpacing(4)
-        self._lbl_color = QLabel("Color:")
-        layout.addWidget(self._lbl_color)
+        self._lbl_color = QLabel("Color")
+        self._lbl_color.setProperty("role", "fieldLabel")
+        context_layout.addWidget(self._lbl_color)
+
         self._combo_color = StableComboBox()
         self._combo_color.addItems([c.capitalize() for c in SUPPORTED_COLORS])
-        layout.addWidget(self._combo_color)
+        context_layout.addWidget(self._combo_color)
+        layout.addWidget(context_card)
 
-        layout.addSpacing(8)
+        action_card = QFrame()
+        action_card.setObjectName("actionCard")
+        action_layout = QVBoxLayout(action_card)
+        action_layout.setContentsMargins(8, 8, 8, 8)
+        action_layout.setSpacing(THEME.spacing.field_gap)
 
-        # --- Place button ---
         self._btn_place = QPushButton("Place eSign")
-        self._btn_place.setMinimumHeight(32)
+        self._btn_place.setProperty("role", "quiet")
         self._btn_place.clicked.connect(self._start_placement)
-        layout.addWidget(self._btn_place)
+        action_layout.addWidget(self._btn_place)
 
-        # --- Delete selected ---
         self._btn_delete = QPushButton("Delete Selected")
+        self._btn_delete.setProperty("role", "quiet")
         self._btn_delete.clicked.connect(self._delete_selected)
-        layout.addWidget(self._btn_delete)
+        action_layout.addWidget(self._btn_delete)
 
-        # --- Clear all ---
         self._btn_clear = QPushButton("Clear All Overlays")
+        self._btn_clear.setProperty("role", "danger")
         self._btn_clear.clicked.connect(self._clear_overlays)
-        layout.addWidget(self._btn_clear)
+        action_layout.addWidget(self._btn_clear)
 
+        self._btn_save_doc = QPushButton("Save Document")
+        self._btn_save_doc.setProperty("role", "primary")
+        self._btn_save_doc.clicked.connect(self._save_pdf)
+        action_layout.addWidget(self._btn_save_doc)
+
+        layout.addWidget(action_card)
         layout.addStretch()
+
         self._apply_mode_ui(0)
         return panel
 
     def _build_right_panel(self) -> QWidget:
         panel = QWidget()
-        panel.setFixedWidth(170)
         panel.setObjectName("rightPanel")
+        panel.setFixedWidth(THEME.sizes.right_panel_width)
+
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(
+            THEME.spacing.panel_padding,
+            THEME.spacing.panel_padding,
+            THEME.spacing.panel_padding,
+            THEME.spacing.panel_padding,
+        )
+        layout.setSpacing(THEME.spacing.section_gap)
 
         lbl = QLabel("Pages")
-        lbl.setFont(self._bold_font())
+        lbl.setProperty("role", "sectionTitle")
         layout.addWidget(lbl)
 
         self._list_pages = QListWidget()
+        self._list_pages.setObjectName("pageList")
         self._list_pages.setViewMode(QListView.ViewMode.IconMode)
         self._list_pages.setFlow(QListView.Flow.TopToBottom)
         self._list_pages.setMovement(QListView.Movement.Static)
         self._list_pages.setResizeMode(QListView.ResizeMode.Adjust)
         self._list_pages.setWrapping(False)
         self._list_pages.setSpacing(8)
-        self._list_pages.setIconSize(QSize(110, 150))
-        self._list_pages.setGridSize(QSize(130, 190))
+        self._list_pages.setIconSize(QSize(108, 148))
+        self._list_pages.setGridSize(QSize(126, 184))
         self._list_pages.setSelectionRectVisible(False)
         self._list_pages.currentRowChanged.connect(self._on_page_list_selected)
         layout.addWidget(self._list_pages, stretch=1)
@@ -262,26 +383,28 @@ class MainWindow(QMainWindow):
 
     def _build_statusbar(self) -> None:
         sb = QStatusBar()
+        sb.setSizeGripEnabled(False)
         self.setStatusBar(sb)
 
         self._sb_file = QLabel("No file open")
-        self._sb_page = QLabel("")
-        self._sb_zoom = QLabel("")
-        self._sb_msg = QLabel("")
+        self._sb_file.setProperty("role", "helper")
 
-        sb.addWidget(self._sb_file)
+        self._sb_page = QLabel("")
+        self._sb_page.setProperty("role", "helper")
+
+        self._sb_zoom = QLabel("")
+        self._sb_zoom.setProperty("role", "helper")
+
+        self._sb_msg = QLabel("")
+        self._sb_msg.setProperty("role", "helper")
+
+        sb.addWidget(self._sb_file, 1)
         sb.addPermanentWidget(self._sb_page)
         sb.addPermanentWidget(self._sb_zoom)
-        sb.addPermanentWidget(self._sb_msg)
-
-    # ------------------------------------------------------------------
-    # Toolbar / navigation actions
-    # ------------------------------------------------------------------
+        sb.addPermanentWidget(self._sb_msg, 1)
 
     def _open_pdf(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open PDF", "", "PDF Files (*.pdf)"
-        )
+        path, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF Files (*.pdf)")
         if not path:
             return
         try:
@@ -305,15 +428,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No PDF", "Please open a PDF first.")
             return
 
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save PDF As", "", "PDF Files (*.pdf)"
-        )
+        path, _ = QFileDialog.getSaveFileName(self, "Save PDF As", "", "PDF Files (*.pdf)")
         if not path:
             return
         if not path.lower().endswith(".pdf"):
             path += ".pdf"
 
-        # Warn if overwriting source
         if os.path.normcase(os.path.abspath(path)) == os.path.normcase(
             os.path.abspath(self._pdf.path or "")
         ):
@@ -368,14 +488,14 @@ class MainWindow(QMainWindow):
         self._viewer.scroll_to_page(focus_page)
         self._update_controls()
 
-    # ------------------------------------------------------------------
-    # Left panel actions
-    # ------------------------------------------------------------------
-
     def _on_mode_changed(self, index: int) -> None:
+        self._current_mode = index
         self._apply_mode_ui(index)
 
     def _apply_mode_ui(self, index: int) -> None:
+        if 0 <= index < len(self._tool_buttons) and not self._tool_buttons[index].isChecked():
+            self._tool_buttons[index].setChecked(True)
+
         self._grp_typed.setVisible(index == 0)
         self._grp_image.setVisible(index == 1)
         self._grp_name.setVisible(index == 2)
@@ -395,8 +515,10 @@ class MainWindow(QMainWindow):
 
     def _browse_image(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select Signature Image", "",
-            "Images (*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.tif *.webp)"
+            self,
+            "Select Signature Image",
+            "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.tif *.webp)",
         )
         if not path:
             return
@@ -412,10 +534,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No PDF", "Please open a PDF first.")
             return
 
-        mode = self._combo_mode.currentIndex()
+        mode = self._current_mode
         color = SUPPORTED_COLORS[self._combo_color.currentIndex()]
 
-        if mode == 0:  # typed signature
+        if mode == 0:
             text = self._sig_text.text().strip()
             font_name = self._combo_font.currentText()
             err = validate_typed_signature(text, font_name)
@@ -428,8 +550,7 @@ class MainWindow(QMainWindow):
                 font_name=font_name,
                 color=color,
             )
-
-        elif mode == 1:  # signature image
+        elif mode == 1:
             err = validate_signature_image(self._image_path)
             if err:
                 QMessageBox.warning(self, "Input required", err)
@@ -438,8 +559,7 @@ class MainWindow(QMainWindow):
                 overlay_type=OverlayType.signature_image,
                 image_path=self._image_path,
             )
-
-        elif mode == 2:  # name
+        elif mode == 2:
             text = self._name_text.text().strip()
             err = validate_name(text)
             if err:
@@ -450,8 +570,7 @@ class MainWindow(QMainWindow):
                 text=text,
                 color=color,
             )
-
-        else:  # date
+        else:
             text = self._date_text.text().strip()
             err = validate_date(text)
             if err:
@@ -473,16 +592,10 @@ class MainWindow(QMainWindow):
         if not self._pdf.is_open:
             return
         page_index = self._viewer.current_viewport_page()
-        page_ids = {
-            ov.id for ov in self._overlays if ov.page_index == page_index
-        }
+        page_ids = {ov.id for ov in self._overlays if ov.page_index == page_index}
         self._overlays = [ov for ov in self._overlays if ov.id not in page_ids]
         self._viewer.clear_overlays_for_page(page_index)
         self._status_msg("Cleared all overlays on this page.")
-
-    # ------------------------------------------------------------------
-    # Viewer signal handlers
-    # ------------------------------------------------------------------
 
     def _on_overlay_placed(self, overlay: OverlayItem) -> None:
         self._compute_overlay_font_size(overlay)
@@ -495,14 +608,11 @@ class MainWindow(QMainWindow):
         self._viewer.refresh_overlay(overlay.id)
 
     def _compute_overlay_font_size(self, overlay: OverlayItem) -> None:
-        """Compute and store the exact PyMuPDF font size for text overlays."""
         if overlay.type == OverlayType.signature_image or not overlay.text:
             return
         if not self._pdf.is_open:
             return
-        font_name = (
-            overlay.font_name if overlay.type == OverlayType.typed_signature else None
-        )
+        font_name = overlay.font_name if overlay.type == OverlayType.typed_signature else None
         overlay.font_size = self._pdf.compute_font_size(
             overlay.text,
             font_name,
@@ -552,10 +662,6 @@ class MainWindow(QMainWindow):
         self._current_page = page_index
         self._update_controls()
 
-    # ------------------------------------------------------------------
-    # Page rendering
-    # ------------------------------------------------------------------
-
     def _load_document(self) -> None:
         if not self._pdf.is_open:
             return
@@ -582,10 +688,6 @@ class MainWindow(QMainWindow):
         self._list_pages.scrollToItem(self._list_pages.item(page_index))
         self._list_pages.blockSignals(prev)
 
-    # ------------------------------------------------------------------
-    # UI state helpers
-    # ------------------------------------------------------------------
-
     def _update_controls(self) -> None:
         open_ = self._pdf.is_open
         pc = self._pdf.page_count if open_ else 0
@@ -598,9 +700,11 @@ class MainWindow(QMainWindow):
         self._act_zoom_out.setEnabled(open_ and self._zoom > ZOOM_MIN)
         self._act_zoom_reset.setEnabled(open_)
         self._act_fit_page.setEnabled(open_)
+
         self._btn_place.setEnabled(open_)
         self._btn_delete.setEnabled(open_)
         self._btn_clear.setEnabled(open_)
+        self._btn_save_doc.setEnabled(open_)
         self._list_pages.setEnabled(open_)
 
         if open_:
@@ -610,7 +714,7 @@ class MainWindow(QMainWindow):
             self._sb_zoom.setText(f"Zoom {int(self._zoom * 100)}%")
         else:
             self._lbl_page.setText("Page 0 / 0")
-            self._lbl_zoom.setText("—")
+            self._lbl_zoom.setText("--")
             self._sb_page.setText("")
             self._sb_zoom.setText("")
 
@@ -619,26 +723,19 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _bold_font() -> QFont:
-        f = QFont()
-        f.setBold(True)
-        return f
+        font = QFont()
+        font.setWeight(QFont.Weight.DemiBold)
+        return font
 
-
-# ---------------------------------------------------------------------------
-# Edit overlay dialog
-# ---------------------------------------------------------------------------
 
 class EditOverlayDialog(QDialog):
-    """
-    Lets the user change the text, font, color, or image of an existing overlay.
-    Call apply_to(overlay) after accept() to commit the changes.
-    """
     preview_changed = Signal()
 
     def __init__(self, overlay: OverlayItem, parent=None):
         super().__init__(parent)
+        self.setObjectName("editOverlayDialog")
         self.setWindowTitle("Edit Overlay")
-        self.setMinimumWidth(320)
+        self.setMinimumWidth(350)
         self._overlay = overlay
         self._new_image_path: Optional[str] = overlay.image_path
         self._suspend_preview = False
@@ -646,8 +743,15 @@ class EditOverlayDialog(QDialog):
 
     def _build_ui(self) -> None:
         self._suspend_preview = True
+
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(THEME.spacing.section_gap)
+
         form = QFormLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(THEME.spacing.field_gap)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         layout.addLayout(form)
         ov = self._overlay
@@ -681,12 +785,17 @@ class EditOverlayDialog(QDialog):
 
         elif ov.type == OverlayType.signature_image:
             self._lbl_img = QLabel(os.path.basename(ov.image_path or "(none)"))
+            self._lbl_img.setProperty("role", "helper")
             self._lbl_img.setWordWrap(True)
-            btn_browse = QPushButton("Browse…")
+
+            btn_browse = QPushButton("Browse...")
+            btn_browse.setProperty("role", "quiet")
             btn_browse.clicked.connect(self._browse_image)
+
             row = QWidget()
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(THEME.spacing.compact_gap)
             row_layout.addWidget(self._lbl_img, stretch=1)
             row_layout.addWidget(btn_browse)
             form.addRow("Image file:", row)
@@ -697,7 +806,25 @@ class EditOverlayDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+        btn_ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        btn_cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        if btn_ok is not None:
+            btn_ok.setText("Apply")
+            btn_ok.setProperty("role", "primary")
+            self._refresh_style(btn_ok)
+        if btn_cancel is not None:
+            btn_cancel.setProperty("role", "quiet")
+            self._refresh_style(btn_cancel)
+
         self._suspend_preview = False
+
+    @staticmethod
+    def _refresh_style(widget: QWidget) -> None:
+        style = widget.style()
+        style.unpolish(widget)
+        style.polish(widget)
+        widget.update()
 
     @staticmethod
     def _make_color_combo(current: Optional[str]) -> StableComboBox:
@@ -709,8 +836,10 @@ class EditOverlayDialog(QDialog):
 
     def _browse_image(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select Signature Image", "",
-            "Images (*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.tif *.webp)"
+            self,
+            "Select Signature Image",
+            "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.tif *.webp)",
         )
         if path:
             err = validate_image_path(path)
@@ -748,13 +877,10 @@ class EditOverlayDialog(QDialog):
                 overlay.text = text
             overlay.font_name = self._font_combo.currentText()
             overlay.color = SUPPORTED_COLORS[self._color_combo.currentIndex()]
-
         elif ov.type in (OverlayType.name, OverlayType.date):
             text = self._text_edit.text().strip()
             if text:
                 overlay.text = text
             overlay.color = SUPPORTED_COLORS[self._color_combo.currentIndex()]
-
         elif ov.type == OverlayType.signature_image:
             overlay.image_path = self._new_image_path
-

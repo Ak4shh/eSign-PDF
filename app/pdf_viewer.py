@@ -3,7 +3,7 @@ from typing import Callable, Dict, List, Optional
 
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal
 from PySide6.QtGui import (
-    QColor, QCursor, QFont, QPainter, QPainterPath, QPen, QPixmap,
+    QBrush, QColor, QCursor, QFont, QPainter, QPainterPath, QPen, QPixmap,
     QKeyEvent,
 )
 from PySide6.QtWidgets import (
@@ -12,15 +12,23 @@ from PySide6.QtWidgets import (
 )
 
 from app.models import OverlayItem, OverlayType, PdfRect
+from app.settings import THEME
 from app.tools import PendingPlacement
 from app.utils import (
     color_name_to_qcolor, normalize_rect, fit_font_size,
 )
 
-_HANDLE_SIZE = 8.0
+_HANDLE_SIZE = 6.0
 _HANDLE_HALF = _HANDLE_SIZE / 2.0
 _MIN_RECT = 10.0
 _PAGE_GAP = 24.0
+
+
+def _theme_color(hex_value: str, alpha: int | None = None) -> QColor:
+    color = QColor(hex_value)
+    if alpha is not None:
+        color.setAlpha(alpha)
+    return color
 
 _HANDLE_CURSORS = [
     Qt.CursorShape.SizeFDiagCursor,
@@ -46,9 +54,11 @@ _HANDLE_EDGES = [
 
 
 class OverlayGraphicsItem(QGraphicsRectItem):
-    SEL_COLOR = QColor(0, 120, 215, 60)
-    HANDLE_COLOR = QColor(0, 120, 215)
-    BORDER_COLOR = QColor(0, 120, 215)
+    SEL_COLOR = _theme_color(THEME.colors.active_fill, alpha=85)
+    HANDLE_BORDER_COLOR = _theme_color(THEME.colors.active_border)
+    HANDLE_FILL_COLOR = _theme_color(THEME.colors.surface_bg)
+    BORDER_COLOR = _theme_color(THEME.colors.active_border)
+    IDLE_BORDER_COLOR = _theme_color(THEME.colors.border)
 
     def __init__(
         self,
@@ -79,8 +89,16 @@ class OverlayGraphicsItem(QGraphicsRectItem):
             | QGraphicsItem.GraphicsItemFlag.ItemIsFocusable
         )
         self.setAcceptHoverEvents(True)
-        self.setPen(QPen(self.BORDER_COLOR, 1.5, Qt.PenStyle.DashLine))
+        self.setPen(self._idle_pen())
         self._refresh_label()
+
+    def _selected_pen(self) -> QPen:
+        pen = QPen(self.BORDER_COLOR, 1.0, Qt.PenStyle.DashLine)
+        pen.setDashPattern([3.0, 2.0])
+        return pen
+
+    def _idle_pen(self) -> QPen:
+        return QPen(self.IDLE_BORDER_COLOR, 0.9, Qt.PenStyle.SolidLine)
 
     def _hs(self) -> float:
         return _HANDLE_HALF / max(self._zoom, 0.1)
@@ -171,7 +189,7 @@ class OverlayGraphicsItem(QGraphicsRectItem):
     def refresh(self) -> None:
         self.prepareGeometryChange()
         self.setRect(self._model_to_scene_rect(self.overlay))
-        self.setPen(QPen(self.BORDER_COLOR, 1.5, Qt.PenStyle.DashLine))
+        self.setPen(self._selected_pen() if self.isSelected() else self._idle_pen())
         self._refresh_label()
         self.update()
 
@@ -181,12 +199,13 @@ class OverlayGraphicsItem(QGraphicsRectItem):
         self.update()
 
     def paint(self, painter: QPainter, option, widget=None) -> None:
+        self.setPen(self._selected_pen() if self.isSelected() else self._idle_pen())
         if self.isSelected():
             painter.fillRect(self.rect(), self.SEL_COLOR)
         super().paint(painter, option, widget)
         if self.isSelected():
-            painter.setPen(QPen(self.HANDLE_COLOR, 1.0))
-            painter.setBrush(QColor(255, 255, 255))
+            painter.setPen(QPen(self.HANDLE_BORDER_COLOR, 0.9))
+            painter.setBrush(self.HANDLE_FILL_COLOR)
             for hr in self._handle_rects():
                 painter.drawRect(hr)
 
@@ -266,6 +285,7 @@ class PdfViewer(QGraphicsView):
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setBackgroundBrush(QBrush(_theme_color(THEME.colors.workspace_bg)))
 
         self._zoom = 1.0
         self._pending: Optional[PendingPlacement] = None
@@ -474,8 +494,10 @@ class PdfViewer(QGraphicsView):
                 return
             self._drag_start = start
             self._drag_start_page = page_index
-            pen = QPen(QColor(0, 120, 215), 1, Qt.PenStyle.DashLine)
-            self._rubber_item = self._scene.addRect(QRectF(start, start), pen)
+            pen = QPen(_theme_color(THEME.colors.active_border), 1.0, Qt.PenStyle.DashLine)
+            pen.setDashPattern([3.0, 2.0])
+            brush = QBrush(_theme_color(THEME.colors.active_fill, alpha=52))
+            self._rubber_item = self._scene.addRect(QRectF(start, start), pen, brush)
             self._rubber_item.setZValue(10)
             return
         super().mousePressEvent(event)
