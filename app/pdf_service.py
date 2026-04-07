@@ -2,14 +2,16 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import warnings
 from typing import Dict, List, Optional, Tuple
 
 import fitz  # PyMuPDF
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QPointF, Qt
+from PySide6.QtGui import QFont, QFontDatabase, QFontMetricsF, QImage, QPainter, QPixmap
 
 from app.models import OverlayItem, OverlayType
 from app.settings import SIGNATURE_FONTS
-from app.utils import color_name_to_mupdf, aspect_fit
+from app.utils import color_name_to_mupdf, color_name_to_qcolor
 
 # Map display font name -> file name
 _FONT_FILE_MAP: Dict[str, str] = {f["name"]: f["file"] for f in SIGNATURE_FONTS}
@@ -22,6 +24,8 @@ class PdfService:
         self._path: Optional[str] = None
         self._cache: Dict[Tuple[int, float], QPixmap] = {}
         self._thumb_cache: Dict[Tuple[int, int, int], QPixmap] = {}
+        self._qt_font_family_cache: Dict[str, str] = {}
+        self._last_save_warnings: List[str] = []
 
     # ------------------------------------------------------------------
     # Open / close
@@ -66,6 +70,10 @@ class PdfService:
         page = self._doc[page_index]
         r = page.rect
         return (r.width, r.height)
+
+    @property
+    def last_save_warnings(self) -> List[str]:
+        return list(self._last_save_warnings)
 
     # ------------------------------------------------------------------
     # Rendering
@@ -182,6 +190,7 @@ class PdfService:
     def save(self, overlays: List[OverlayItem], output_path: str) -> None:
         if self._doc is None or self._path is None:
             raise RuntimeError("No PDF is open.")
+        self._last_save_warnings = []
 
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
             tmp_path = tmp.name
@@ -225,6 +234,36 @@ class PdfService:
         overlay: OverlayItem,
         color: Tuple[float, float, float],
     ) -> None:
+        text = (overlay.text or "").strip()
+        if not text:
+            return
+
+        try:
+            png_stream = self._render_typed_signature_png_stream(overlay, rect)
+            page.insert_image(
+                rect,
+                stream=png_stream,
+                keep_proportion=False,
+                overlay=True,
+            )
+            return
+        except Exception as exc:
+            msg = (
+                "Typed signature rasterization failed; fell back to text insertion "
+                f"for overlay {overlay.id[:8]}. Details: {exc}"
+            )
+            self._last_save_warnings.append(msg)
+            warnings.warn(msg, RuntimeWarning, stacklevel=2)
+
+        self._insert_typed_signature_as_text(page, rect, overlay, color)
+
+    def _insert_typed_signature_as_text(
+        self,
+        page: fitz.Page,
+        rect: fitz.Rect,
+        overlay: OverlayItem,
+        color: Tuple[float, float, float],
+    ) -> None:
         font_file = _FONT_FILE_MAP.get(overlay.font_name or "")
         text = overlay.text or ""
 
@@ -249,6 +288,97 @@ class PdfService:
                 return
 
         self._insert_text(page, rect, text, color, overlay.font_size)
+
+    def _render_typed_signature_png_stream(
+        self,
+        overlay: OverlayItem,
+        rect: fitz.Rect,
+    ) -> bytes:
+        text = (overlay.text or "").strip()
+        if not text:
+            raise ValueError("Typed signature text is empty.")
+
+        raster_scale = 3.0
+        img_w = max(4, int(round(rect.width * raster_scale)))
+        img_h = max(4, int(round(rect.height * raster_scale)))
+
+        image = QImage(img_w, img_h, QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(Qt.GlobalColor.transparent)
+
+        fontsize_pt = overlay.font_size or self.compute_font_size(
+            text,
+            overlay.font_name,
+            rect.width,
+            rect.height,
+        )
+        font = self._resolve_signature_font_for_render(overlay, fontsize_pt * raster_scale)
+
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        painter.setPen(color_name_to_qcolor(overlay.color or "black"))
+        painter.setFont(font)
+
+        metrics = QFontMetricsF(font)
+        text_w = max(metrics.horizontalAdvance(text), 1.0)
+        text_h = max(metrics.height(), 1.0)
+
+        # Keep long signatures inside the requested box even if Qt metrics differ from MuPDF.
+        if text_w > img_w or text_h > img_h:
+            scale = min((img_w / text_w), (img_h / text_h)) * 0.98
+            font.setPixelSize(max(1, int(round(font.pixelSize() * scale))))
+            painter.setFont(font)
+            metrics = QFontMetricsF(font)
+            text_w = max(metrics.horizontalAdvance(text), 1.0)
+            text_h = max(metrics.height(), 1.0)
+
+        x = max((img_w - text_w) / 2.0, 0.0)
+        y = max((img_h - text_h) / 2.0, 0.0) + metrics.ascent()
+        painter.drawText(QPointF(x, y), text)
+        painter.end()
+
+        byte_array = QByteArray()
+        buffer = QBuffer(byte_array)
+        if not buffer.open(QIODevice.OpenModeFlag.WriteOnly):
+            raise RuntimeError("Unable to open image buffer for signature rendering.")
+        ok = image.save(buffer, "PNG")
+        buffer.close()
+        if not ok:
+            raise RuntimeError("Unable to encode typed signature image as PNG.")
+        return bytes(byte_array)
+
+    def _resolve_signature_font_for_render(
+        self,
+        overlay: OverlayItem,
+        pixel_size: float,
+    ) -> QFont:
+        font = QFont()
+        font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+        font.setPixelSize(max(1, int(round(pixel_size))))
+
+        font_file = _FONT_FILE_MAP.get(overlay.font_name or "")
+        if font_file:
+            font_path = os.path.join(self._fonts_dir, font_file)
+            if os.path.isfile(font_path):
+                family = self._qt_font_family_cache.get(font_path)
+                if family is None:
+                    font_id = QFontDatabase.addApplicationFont(font_path)
+                    families = QFontDatabase.applicationFontFamilies(font_id) if font_id >= 0 else []
+                    family = families[0] if families else ""
+                    self._qt_font_family_cache[font_path] = family
+                if family:
+                    font.setFamily(family)
+                    return font
+            # Font configured but file missing/unusable -> graceful fallback
+            font.setFamily("Segoe UI")
+            return font
+
+        if overlay.font_name:
+            font.setFamily(overlay.font_name)
+        else:
+            font.setFamily("Segoe UI")
+        return font
 
     def _insert_text(
         self,
