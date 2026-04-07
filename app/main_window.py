@@ -75,6 +75,18 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._update_controls()
 
+    def _svg_icon(self, filename: str) -> QIcon:
+        svg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "SVGs", filename)
+        return QIcon(svg_path) if os.path.isfile(svg_path) else QIcon()
+
+    @staticmethod
+    def _apply_button_icon(button: QPushButton, icon: QIcon, size: int = 14) -> None:
+        if icon.isNull():
+            return
+        button.setIcon(icon)
+        button.setIconSize(QSize(size, size))
+        button.setProperty("iconButton", True)
+
     def _apply_theme(self) -> None:
         app = QApplication.instance()
         if app is None:
@@ -119,9 +131,11 @@ class MainWindow(QMainWindow):
         tb.setMovable(False)
         tb.setFloatable(False)
         tb.setIconSize(QSize(16, 16))
+        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.addToolBar(tb)
 
         self._act_open = QAction("Open PDF", self)
+        self._act_open.setIcon(self._svg_icon("open.svg"))
         self._act_open.setShortcut("Ctrl+O")
         self._act_open.triggered.connect(self._open_pdf)
         tb.addAction(self._act_open)
@@ -320,22 +334,27 @@ class MainWindow(QMainWindow):
 
         self._btn_place = QPushButton("Place eSign")
         self._btn_place.setProperty("role", "quiet")
+        self._btn_place.setProperty("penNudge", True)
         self._btn_place.clicked.connect(self._start_placement)
+        self._apply_button_icon(self._btn_place, self._svg_icon("pen.svg"))
         action_layout.addWidget(self._btn_place)
 
         self._btn_delete = QPushButton("Delete Selected")
         self._btn_delete.setProperty("role", "quiet")
         self._btn_delete.clicked.connect(self._delete_selected)
+        self._apply_button_icon(self._btn_delete, self._svg_icon("delete.svg"))
         action_layout.addWidget(self._btn_delete)
 
         self._btn_clear = QPushButton("Clear All Overlays")
         self._btn_clear.setProperty("role", "danger")
         self._btn_clear.clicked.connect(self._clear_overlays)
+        self._apply_button_icon(self._btn_clear, self._svg_icon("Clear.svg"))
         action_layout.addWidget(self._btn_clear)
 
         self._btn_save_doc = QPushButton("Save Document")
         self._btn_save_doc.setProperty("role", "primary")
         self._btn_save_doc.clicked.connect(self._save_pdf)
+        self._apply_button_icon(self._btn_save_doc, self._svg_icon("save.svg"))
         action_layout.addWidget(self._btn_save_doc)
 
         layout.addWidget(action_card)

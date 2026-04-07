@@ -275,6 +275,16 @@ QPushButton[role="danger"]:pressed {{
     border-color: {c.active_border};
 }}
 
+QPushButton[iconButton="true"] {{
+    padding-left: 8px;
+    padding-right: 14px;
+}}
+
+QPushButton[penNudge="true"] {{
+    padding-top: 6px;
+    padding-bottom: 2px;
+}}
+
 QListWidget#pageList {{
     background: {c.surface_bg};
     border: 1px solid {c.border};
