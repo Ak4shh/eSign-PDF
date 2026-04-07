@@ -1,6 +1,5 @@
 import sys
 import os
-
 import fitz
 fitz.TOOLS.mupdf_display_errors(False)
 
@@ -8,10 +7,10 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QFontDatabase
 
 from app.main_window import MainWindow
+from app.paths import resource_path
 from app.settings import SIGNATURE_FONTS
 
-ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
-FONTS_DIR = os.path.join(ASSETS_DIR, "fonts")
+FONTS_DIR = resource_path("assets", "fonts")
 
 
 def register_fonts() -> None:

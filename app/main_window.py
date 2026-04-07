@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from app.image_service import validate_image_path
 from app.models import OverlayItem, OverlayType
+from app.paths import resource_path
 from app.pdf_service import PdfService
 from app.pdf_viewer import PdfViewer
 from app.settings import (
@@ -76,7 +77,7 @@ class MainWindow(QMainWindow):
         self._update_controls()
 
     def _svg_icon(self, filename: str) -> QIcon:
-        svg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "SVGs", filename)
+        svg_path = resource_path("SVGs", filename)
         return QIcon(svg_path) if os.path.isfile(svg_path) else QIcon()
 
     @staticmethod

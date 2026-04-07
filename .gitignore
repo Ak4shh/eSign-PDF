@@ -12,6 +12,11 @@ ENV/
 # Build / packaging
 build/
 dist/
+site/
+*.pyz
+__pyinstaller/
+*.manifest
+*.pkg
 *.egg-info/
 .eggs/
 pip-wheel-metadata/
@@ -36,8 +41,10 @@ desktop.ini
 
 # Local runtime / logs
 *.log
+*.tmp
 tmp/
 temp/
+.tmp*/
 
 # Local docs / notes (not for repo)
 PLAN.md
